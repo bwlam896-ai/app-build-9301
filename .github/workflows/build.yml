@@ -1,0 +1,76 @@
+name: Build, Sign & Release Android Kotlin Packages (APK & AAB)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Accept Android Licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Prepare Kotlin Project & Keystore
+        run: |
+          mkdir -p app/src/main/res/mipmap-hdpi
+          mkdir -p app/src/main/res/mipmap-xhdpi
+          mkdir -p app/src/main/res/mipmap-xxhdpi
+          mkdir -p app/src/main/res/mipmap-xxxhdpi
+          if [ -f "app_icon.png" ]; then
+            cp app_icon.png app/src/main/res/mipmap-hdpi/ic_launcher.png || true
+            cp app_icon.png app/src/main/res/mipmap-xhdpi/ic_launcher.png || true
+            cp app_icon.png app/src/main/res/mipmap-xxhdpi/ic_launcher.png || true
+            cp app_icon.png app/src/main/res/mipmap-xxxhdpi/ic_launcher.png || true
+          fi
+
+          rm -f preview.html || true
+          
+          keytool -genkeypair -v -keystore release.keystore -alias appkey -keyalg RSA -keysize 2048 -validity 10000 -storepass appmaker123 -keypass appmaker123 -dname "CN=AppMaker, OU=Mobile, O=AppMaker, L=Algiers, S=Algiers, C=DZ"
+          mkdir -p app
+          cp release.keystore app/release.keystore || true
+
+          if [ ! -f "settings.gradle" ] && [ ! -f "settings.gradle.kts" ]; then
+            echo "include ':app'" > settings.gradle
+          fi
+
+      - name: Compile & Sign APK and AAB (Release Mode)
+        run: |
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew assembleRelease bundleRelease --stacktrace
+          else
+            gradle assembleRelease bundleRelease --stacktrace
+          fi
+          find . -name "*.apk" -type f -exec cp {} ./ادكار-release.apk \; || true
+          find . -name "*.aab" -type f -exec cp {} ./ادكار-release.aab \; || true
+
+      - name: Publish Release Packages to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/heads/')
+        with:
+          tag_name: v1.0.0
+          name: "ادكار v1.0.0 (Official Release)"
+          files: |
+            *-release.apk
+            *-release.aab
+            release.keystore
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
